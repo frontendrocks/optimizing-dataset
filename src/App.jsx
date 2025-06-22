@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import useDebounce from './hooks/useDebounce';
 import './App.css';
 
-// Memoized list item for performance
 const UserItem = React.memo(({ user }) => (
   <li key={user.id}>
     {user.firstName} {user.lastName} — {user.email}
@@ -12,38 +11,35 @@ const UserItem = React.memo(({ user }) => (
 function App() {
   const [users, setUsers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
+
+  const [skip, setSkip] = useState(0); // how many users already fetched
   const limit = 10;
 
-  const debouncedSearchTerm = useDebounce(searchTerm, 1000);
-  const lastFetchRef = useRef({ term: '', page: -1 });
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
+  const lastQueryRef = useRef('');
 
-  const fetchUsers = async (query = '', page = 0) => {
-    const skip = page * limit;
-
-    // Prevent duplicate fetches
-    if (lastFetchRef.current.term === query && lastFetchRef.current.page === page) {
-      return;
-    }
-
-    lastFetchRef.current = { term: query, page };
+  const fetchUsers = async (query = '', skipValue = 0, append = false) => {
     setLoading(true);
-
     try {
-      const url = query.length >= 2
-        ? `https://dummyjson.com/users/search?q=${encodeURIComponent(query)}&limit=${limit}&skip=${skip}`
-        : `https://dummyjson.com/users?limit=${limit}&skip=${skip}`;
+      const url =
+        query.length >= 2
+          ? `https://dummyjson.com/users/search?q=${encodeURIComponent(query)}&limit=${limit}&skip=${skipValue}`
+          : `https://dummyjson.com/users?limit=${limit}&skip=${skipValue}`;
 
       const response = await fetch(url);
       const data = await response.json();
 
-      setUsers(Array.isArray(data.users) ? data.users : []);
-      setTotal(typeof data.total === 'number' ? data.total : 0);
-    } catch (error) {
-      console.error('Fetch error:', error);
+      if (Array.isArray(data.users)) {
+        setUsers(prev => append ? [...prev, ...data.users] : data.users);
+        setTotal(data.total || 0);
+      } else {
+        setUsers([]);
+        setTotal(0);
+      }
+    } catch (err) {
+      console.error('Fetch error:', err);
       setUsers([]);
       setTotal(0);
     } finally {
@@ -51,21 +47,29 @@ function App() {
     }
   };
 
+  // Reset on search term change
   useEffect(() => {
-    fetchUsers(debouncedSearchTerm, page);
-  }, [debouncedSearchTerm, page]);
+    setSkip(0);
+    lastQueryRef.current = debouncedSearchTerm;
+    fetchUsers(debouncedSearchTerm, 0, false);
+  }, [debouncedSearchTerm]);
 
-  const handleSearch = (e) => {
-    const value = e.target.value;
-    setSearchTerm(value);
-    setPage(0); // reset to first page on new search
+  // Handle "Load More"
+  const handleLoadMore = () => {
+    const nextSkip = skip + limit;
+    setSkip(nextSkip);
+    fetchUsers(lastQueryRef.current, nextSkip, true);
   };
 
-  const totalPages = Math.ceil(total / limit);
+  const handleSearch = (e) => {
+    setSearchTerm(e.target.value);
+  };
+
+  const hasMore = users.length < total;
 
   return (
     <div style={{ padding: '20px', fontFamily: 'Arial' }}>
-      <h1>User Search (with Pagination)</h1>
+      <h1>User Search (Load More)</h1>
 
       <input
         type="text"
@@ -80,11 +84,7 @@ function App() {
         }}
       />
 
-      {loading ? (
-        <div style={{ minHeight: '300px' }}>
-          <p>Loading users...111</p>
-        </div>
-      ) : users.length > 0 ? (
+      {users.length > 0 ? (
         <>
           <ul>
             {users.map((user) => (
@@ -92,30 +92,16 @@ function App() {
             ))}
           </ul>
 
-          {totalPages > 1 && (
+          {hasMore && (
             <div style={{ marginTop: '20px' }}>
-              <button
-                aria-label="Previous page"
-                disabled={page === 0}
-                onClick={() => setPage((prev) => Math.max(prev - 1, 0))}
-              >
-                ◀ Prev
-              </button>
-
-              <span style={{ margin: '0 10px' }}>
-                Page {page + 1} of {totalPages}
-              </span>
-
-              <button
-                aria-label="Next page"
-                disabled={page >= totalPages - 1}
-                onClick={() => setPage((prev) => prev + 1)}
-              >
-                Next ▶
+              <button onClick={handleLoadMore} disabled={loading}>
+                {loading ? 'Loading...' : 'Load More'}
               </button>
             </div>
           )}
         </>
+      ) : loading ? (
+        <p>Loading users...</p>
       ) : (
         <p>No users found.</p>
       )}
