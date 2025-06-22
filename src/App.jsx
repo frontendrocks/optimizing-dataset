@@ -13,14 +13,31 @@ function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
+  const [skip, setSkip] = useState(0);
 
-  const [skip, setSkip] = useState(0); // how many users already fetched
   const limit = 10;
-
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
-  const lastQueryRef = useRef('');
 
+  const controllerRef = useRef(null);
+  const fetchKeyRef = useRef({ query: '', skip: -1 });
+
+  // Fetch users with optional append mode
   const fetchUsers = async (query = '', skipValue = 0, append = false) => {
+    // Avoid duplicate fetch
+    if (
+      fetchKeyRef.current.query === query &&
+      fetchKeyRef.current.skip === skipValue
+    ) {
+      return;
+    }
+
+    fetchKeyRef.current = { query, skip: skipValue };
+
+    // Abort previous request
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+
     setLoading(true);
     try {
       const url =
@@ -28,17 +45,23 @@ function App() {
           ? `https://dummyjson.com/users/search?q=${encodeURIComponent(query)}&limit=${limit}&skip=${skipValue}`
           : `https://dummyjson.com/users?limit=${limit}&skip=${skipValue}`;
 
-      const response = await fetch(url);
-      const data = await response.json();
+      const res = await fetch(url, { signal: controller.signal });
+      const data = await res.json();
 
       if (Array.isArray(data.users)) {
-        setUsers(prev => append ? [...prev, ...data.users] : data.users);
-        setTotal(data.total || 0);
+        setUsers(prev =>
+          append ? [...prev, ...data.users] : data.users
+        );
+        setTotal(typeof data.total === 'number' ? data.total : 0);
       } else {
         setUsers([]);
         setTotal(0);
       }
     } catch (err) {
+      if (err.name === 'AbortError') {
+        // Fetch was aborted
+        return;
+      }
       console.error('Fetch error:', err);
       setUsers([]);
       setTotal(0);
@@ -47,22 +70,20 @@ function App() {
     }
   };
 
-  // Reset on search term change
+  // Reset on search change
   useEffect(() => {
     setSkip(0);
-    lastQueryRef.current = debouncedSearchTerm;
     fetchUsers(debouncedSearchTerm, 0, false);
   }, [debouncedSearchTerm]);
 
-  // Handle "Load More"
+  const handleSearch = (e) => {
+    setSearchTerm(e.target.value);
+  };
+
   const handleLoadMore = () => {
     const nextSkip = skip + limit;
     setSkip(nextSkip);
-    fetchUsers(lastQueryRef.current, nextSkip, true);
-  };
-
-  const handleSearch = (e) => {
-    setSearchTerm(e.target.value);
+    fetchUsers(debouncedSearchTerm, nextSkip, true);
   };
 
   const hasMore = users.length < total;
@@ -83,6 +104,10 @@ function App() {
           fontSize: '16px',
         }}
       />
+
+      <p>
+        Showing {users.length} of {total} users
+      </p>
 
       {users.length > 0 ? (
         <>
